@@ -1,0 +1,64 @@
+package main
+
+import (
+	"fmt"
+	"github.com/micro/go-micro"
+	"github.com/micro/go-micro/util/log"
+	"os"
+	"test4/handler"
+	test4 "test4/proto/test4"
+	"test4/subscriber"
+
+	"contrib.go.opencensus.io/exporter/zipkin"
+	wrapperTrace "github.com/micro/go-plugins/wrapper/trace/opencensus"
+	//"github.com/opentracing/opentracing-go"
+	openzipkin "github.com/openzipkin/zipkin-go"
+	zipkinHTTP "github.com/openzipkin/zipkin-go/reporter/http"
+	"go.opencensus.io/trace"
+)
+
+func TraceBoot() {
+	apiURL := "http://192.168.18.60:9411/api/v1/spans"
+	hostPort, _ := os.Hostname()
+	hostPort += ":8877"
+	fmt.Println(hostPort)
+	serviceName := "go.micro.srv.test4"
+	localEndpoint, err := openzipkin.NewEndpoint(serviceName, hostPort)
+	if err != nil {
+		log.Fatalf("Failed to create the local zipkinEndpoint: %v", err)
+	}
+	reporter := zipkinHTTP.NewReporter(apiURL)
+	ze := zipkin.NewExporter(reporter, localEndpoint)
+	trace.RegisterExporter(ze)
+	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
+	return
+}
+
+func main() {
+	TraceBoot()
+	// New Service
+	service := micro.NewService(
+		micro.Name("go.micro.srv.test4"),
+		micro.Version("latest"),
+		micro.WrapHandler(wrapperTrace.NewHandlerWrapper()),
+		micro.WrapClient(wrapperTrace.NewClientWrapper()),
+		micro.WrapSubscriber(wrapperTrace.NewSubscriberWrapper()),
+	)
+
+	// Initialise service
+	service.Init()
+
+	// Register Handler
+	test4.RegisterTest4Handler(service.Server(), new(handler.Test4))
+	// Register Struct as Subscriber
+	micro.RegisterSubscriber("go.micro.srv.test4", service.Server(), new(subscriber.Test4))
+
+	// Register Function as Subscriber
+	micro.RegisterSubscriber("go.micro.srv.test4", service.Server(), subscriber.Handler)
+
+
+	// Run service
+	if err := service.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
